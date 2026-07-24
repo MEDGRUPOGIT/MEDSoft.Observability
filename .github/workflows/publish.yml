@@ -1,0 +1,34 @@
+name: publish
+
+# Publica o pacote no GitHub Packages (nuget.pkg.github.com/MEDGRUPOGIT) ao
+# criar uma tag vX.Y.Z. Versao vem do .csproj (bump = editar Version + taggear).
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore + Build
+        run: dotnet build -c Release src/MEDSoft.Observability/MEDSoft.Observability.csproj
+
+      - name: Pack
+        run: dotnet pack -c Release --no-build -o ./nupkg src/MEDSoft.Observability/MEDSoft.Observability.csproj
+
+      - name: Push (GitHub Packages, skip se versao ja existe)
+        run: >
+          dotnet nuget push "./nupkg/*.nupkg"
+          --source "https://nuget.pkg.github.com/MEDGRUPOGIT/index.json"
+          --api-key ${{ secrets.GITHUB_TOKEN }}
+          --skip-duplicate

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net8.0 (LTS) = piso: consumivel por apps net8/net9/net10. NAO net10
+         (excluiria os apps net8). Apps net6/7 fazem upgrade antes (ADR-041). -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- Metadata de pacote (GitHub Packages: nuget.pkg.github.com/MEDGRUPOGIT). -->
+    <PackageId>MEDSoft.Observability</PackageId>
+    <Version>0.1.0</Version>
+    <Company>Medgrupo</Company>
+    <Authors>Medgrupo Platform</Authors>
+    <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado.</Description>
+    <RepositoryUrl>https://github.com/MEDGRUPOGIT/MEDSoft.Observability</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Conjunto 1.14.x validado pelo contrato ADR-031 (fixture PadraoOuro /
+       VideoStream / MEDPlanner). Instrumentation.AWS NAO entra no nucleo:
+       e app-especifico (via extraTracing) pra nao forcar dep de AWS em quem
+       nao usa; quem precisa fixa 1.14.2 (ultima que aceita core [1.14, 2.0)). -->
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
+  </ItemGroup>
+
+  <!-- AddAspNetCoreInstrumentation num classlib exige o framework ASP.NET
+       (mesmo padrao da fixture PadraoOuro). Inofensivo em Worker/Integration. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
