@@ -17,13 +17,19 @@ namespace MEDSoft.Observability;
 /// Núcleo (todo app, sem config): HttpClient, sources/meters
 /// <c>MEDGRUPO.Messaging</c>/<c>MEDGRUPO.ServiceConnect</c> (da MEDGRUPO.SDK),
 /// runtime metrics (<c>dotnet_*</c>), AspNetCore (se <paramref name="isWebApp"/>),
-/// logging.
+/// logging — e, desde a v0.2.0, os RECURSOS: PostgreSQL (Npgsql), SQL Server,
+/// EF Core, MongoDB, Redis, AWS SDK e RabbitMQ.Client 7.
 ///
-/// App-específico via <paramref name="extraTracing"/>/<paramref name="extraMetrics"/>
-/// (o app adiciona o pacote de instrumentação + a linha): EFCore, Npgsql,
-/// StackExchange.Redis, Mongo (<c>DiagnosticsActivityEventSubscriber</c>),
-/// AWS SDK, RabbitMQ.Client 7 (sources <c>RabbitMQ.Client.Publisher/Subscriber</c>),
-/// ActivitySource/Meter custom.
+/// <para><b>Por que os recursos vieram pro núcleo (v0.2.0).</b> Na v0.1.0 eram
+/// opt-in via <paramref name="extraTracing"/>. Auditoria de 2026-07-25:
+/// <b>NENHUMA das 10 workloads passava <c>extraTracing</c></b> — todas chamavam só
+/// <c>AddMEDSoftObservability(isWebApp:…)</c>, deixando um comentário
+/// "// DB via extraTracing = follow-up". Resultado medido: ZERO span de Mongo,
+/// Postgres, SQL Server, Redis ou S3 em produção. Opt-in que ninguém exerce é
+/// cobertura zero — o default passa a ser "instrumentado".</para>
+///
+/// <para>Segue app-específico via <paramref name="extraTracing"/>/<paramref name="extraMetrics"/>:
+/// <c>ActivitySource</c>/<c>Meter</c> custom do domínio.</para>
 ///
 /// Contrato (ADR-024/031) — nos VALUES do app, não no código:
 /// <list type="bullet">
@@ -81,7 +87,56 @@ public static class ObservabilityServiceCollectionExtensions
                     // (os sources reais são MEDGRUPO.Messaging/ServiceConnect;
                     // nome errado = trace some em silêncio).
                     .AddSource("MEDGRUPO.Messaging")
-                    .AddSource("MEDGRUPO.ServiceConnect");
+                    .AddSource("MEDGRUPO.ServiceConnect")
+
+                    // ---- RECURSOS por SOURCE (v0.2.0) — zero dependência nova ----
+
+                    // PostgreSQL. O Npgsql (6+) já expõe ActivitySource próprio;
+                    // `AddNpgsql()` do pacote Npgsql.OpenTelemetry é literalmente
+                    // `AddSource("Npgsql")`. Usar o source direto evita arrastar
+                    // uma dependência de Npgsql numa versão fixa — o pacote é
+                    // consumido por apps em Npgsql 9 E 10, e forçar 10 seria
+                    // conflito REAL de versão (não é bloat, é build quebrado).
+                    .AddSource("Npgsql")
+
+                    // RabbitMQ.Client 7 — sources NATIVOS (não há pacote de
+                    // instrumentação). Em apps ainda na 6.x isto é no-op: a 6.x
+                    // não tem ActivitySource, então o span só existe via
+                    // MEDGRUPO.Messaging (ou após bump para 7.x).
+                    .AddSource("RabbitMQ.Client.Publisher")
+                    .AddSource("RabbitMQ.Client.Subscriber")
+
+                    // MongoDB. ATENÇÃO: registrar o source é METADE do trabalho —
+                    // o app PRECISA fazer o wiring do ClusterConfigurator no
+                    // MongoClientSettings (pacote MongoDB.Driver.Core.Extensions.
+                    // DiagnosticSources), senão nenhum span é produzido e isto
+                    // aqui fica silenciosamente inerte. Referência de wiring:
+                    // MEDPlanner .../Data/Factories/MongoClientFactory.cs
+                    .AddSource("MongoDB.Driver.Core.Extensions.DiagnosticSources")
+
+                    // ---- RECURSOS por INSTRUMENTAÇÃO (v0.2.0) ----
+
+                    // SQL Server (Microsoft.Data.SqlClient + Dapper). Cobre
+                    // conteudos e trilhas, que estavam 100% cegos no DB.
+                    // SetDbStatementForText fica FALSE (default): capturar o texto
+                    // do comando levaria PII/segredo pro trace.
+                    .AddSqlClientInstrumentation()
+
+                    // EF Core — span lógico da query (complementa o do provider).
+                    .AddEntityFrameworkCoreInstrumentation()
+
+                    // Redis. GOTCHA: exige um IConnectionMultiplexer registrado no
+                    // DI para se enganchar; sem isso vira no-op SILENCIOSO. Se o
+                    // app constrói o multiplexer na mão, registrar no DI ou usar
+                    // o overload que recebe a instância via extraTracing.
+                    .AddRedisInstrumentation()
+
+                    // AWS SDK (S3, SNS, SQS, DynamoDB…). Estava no núcleo do
+                    // MEDSoft.VideoStream.Observability e foi PERDIDO na
+                    // generalização — autenticacao publica em SNS e apostilas usa
+                    // S3, ambos invisíveis. O zero-code (CLR profiler) TAMBÉM não
+                    // cobre AWS SDK, então sem isto não há span por nenhuma via.
+                    .AddAWSInstrumentation();
 
                 if (isWebApp)
                 {
@@ -111,7 +166,15 @@ public static class ObservabilityServiceCollectionExtensions
                     // >= 1.14 emite dotnet_* (semconv novo, sem prefixo process_runtime_).
                     .AddRuntimeInstrumentation()
                     .AddMeter("MEDGRUPO.Messaging")
-                    .AddMeter("MEDGRUPO.ServiceConnect");
+                    .AddMeter("MEDGRUPO.ServiceConnect")
+
+                    // ---- Métricas de RECURSO (v0.2.0) ----
+                    // Alimentam `db_client_operation_duration_*`, que as recording
+                    // rules `db_client:*` da plataforma consomem (RED de banco por
+                    // db_system_name/service_name/server_address).
+                    // AddMeter por NOME é seguro: meter inexistente é no-op, não erro.
+                    .AddMeter("Npgsql")
+                    .AddMeter("OpenTelemetry.Instrumentation.SqlClient");
 
                 if (isWebApp)
                 {
