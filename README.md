@@ -9,18 +9,18 @@ coletor decide); `ILogger`→OTLP correlacionado (`trace_id`).
 ## Uso
 
 ```csharp
-// Program.cs (API)
-builder.Services.AddMEDSoftObservability(
-    isWebApp: true,
-    extraTracing: t => t
-        .AddEntityFrameworkCoreInstrumentation()
-        .AddNpgsql()
-        .AddRedisInstrumentation(),
-    extraMetrics: m => m.AddMeter("MyApp.Domain"),
-    enableGenAI: false);
+// Program.cs (API) — recursos (DB/cache/AWS/MQ) ja vem no nucleo desde a v0.2.0
+builder.Services.AddMEDSoftObservability(isWebApp: true);
 
 // Worker / Integration (headless)
 services.AddMEDSoftObservability(isWebApp: false);
+
+// So o que e do DOMINIO do app precisa de extraTracing/extraMetrics
+builder.Services.AddMEDSoftObservability(
+    isWebApp: true,
+    extraTracing: t => t.AddSource("MinhaApp.Dominio"),
+    extraMetrics: m => m.AddMeter("MinhaApp.Dominio"),
+    enableGenAI: false);
 ```
 
 ## Núcleo (todo app, zero config)
@@ -28,44 +28,45 @@ services.AddMEDSoftObservability(isWebApp: false);
 HttpClient · `MEDGRUPO.Messaging` + `MEDGRUPO.ServiceConnect` (MEDGRUPO.SDK) ·
 runtime metrics (`dotnet_*`) · AspNetCore se `isWebApp` · `ILogger`→OTLP.
 
+**Desde a v0.2.0, também os recursos** — sem nenhuma linha a mais:
+
+| Recurso | Como | Observação |
+|---|---|---|
+| PostgreSQL | `AddSource("Npgsql")` | sem dependência nova (o `AddNpgsql()` do `Npgsql.OpenTelemetry` é exatamente isso) |
+| SQL Server | `AddSqlClientInstrumentation()` | texto do comando **não** é capturado (evita PII) |
+| EF Core | `AddEntityFrameworkCoreInstrumentation()` | span lógico, complementa o do provider |
+| MongoDB | `AddSource("MongoDB.Driver.Core.Extensions.DiagnosticSources")` | ⚠️ **exige wiring no app** — ver abaixo |
+| Redis | `AddRedisInstrumentation()` | ⚠️ exige `IConnectionMultiplexer` no DI |
+| AWS SDK (S3/SNS/SQS) | `AddAWSInstrumentation()` | o zero-code **não** cobre AWS |
+| RabbitMQ.Client 7 | `AddSource("RabbitMQ.Client.Publisher"/"Subscriber")` | no-op em apps na 6.x |
+
+### ⚠️ Os dois que exigem ação no app
+
+**MongoDB** — registrar o source é metade do trabalho. Sem o `ClusterConfigurator`
+no `MongoClientSettings`, nenhum span é produzido:
+
+```csharp
+// + PackageReference MongoDB.Driver.Core.Extensions.DiagnosticSources 3.0.0
+settings.ClusterConfigurator = cb =>
+    cb.Subscribe(new DiagnosticsActivityEventSubscriber());
+```
+
+**Redis** — `AddRedisInstrumentation()` se engancha via `IConnectionMultiplexer`
+do DI. Se o app constrói o multiplexer na mão e não registra, vira **no-op
+silencioso**.
+
 ## App-específico (via `extraTracing` / `extraMetrics`)
 
-Adicione o **pacote** de instrumentação + a **linha**:
+Sobrou só o que é do **domínio** do app:
 
-| Precisa | Pacote | Linha |
-|---|---|---|
-| PostgreSQL | `Npgsql.OpenTelemetry` | `.AddNpgsql()` |
-| EF Core | `OpenTelemetry.Instrumentation.EntityFrameworkCore` | `.AddEntityFrameworkCoreInstrumentation()` |
-| Redis | `OpenTelemetry.Instrumentation.StackExchangeRedis` | `.AddRedisInstrumentation()` |
-| Mongo (<3.7) | `MongoDB.Driver.Core.Extensions.DiagnosticSources` | `.AddSource(DiagnosticsActivityEventSubscriber.ActivitySourceName)` + `ClusterConfigurator` |
-| AWS SDK | `OpenTelemetry.Instrumentation.AWS` **1.14.2** | `.AddAWSInstrumentation()` |
-| RabbitMQ.Client 7 | (nativo) | `.AddSource("RabbitMQ.Client.Publisher").AddSource("RabbitMQ.Client.Subscriber")` |
-| Spans custom | (nativo) | `.AddSource("MinhaApp.Dominio")` |
+| Precisa | Linha |
+|---|---|
+| Spans custom | `.AddSource("MinhaApp.Dominio")` |
+| Meters custom | `.AddMeter("MinhaApp.Dominio")` |
 
-## GenAI (`enableGenAI: true`)
-
-Registra `Microsoft.SemanticKernel*` (sources + meters → `gen_ai.*` /
-`semantic_kernel_connectors_openai_tokens_*`). O app precisa **ligar o switch
-experimental do SK** (`Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnostics`,
-variante **não-sensível** — tokens/modelo/latência, sem prompt/response PII). Só
-vale em imagem **rebuildada** após o switch. Dashboard/rule no gitops
-(`gen-ai.json` / `service:genai_tokens_*`).
-
-## Contrato (nos VALUES do app — obrigatório)
-
-```yaml
-podAnnotations:
-  instrumentation.opentelemetry.io/inject-dotnet: "false"   # auto-inject + SDK = crash exit 139
-  medgrupo.io/logs: "otlp"                                  # após validar OTLP
-```
-E o chart `medgrupo-prod-app ≥ 0.5.12` (injeta `OTEL_SERVICE_NAME`).
-
-## Consumir (GitHub Packages)
-
-`nuget.config` do app aponta pra `https://nuget.pkg.github.com/MEDGRUPOGIT/index.json`
-(PAT com `read:packages`, env `GH_PACKAGES_TOKEN`). Ver
-`docs/github-packages-nuget` no gitops-plataform.
-
----
-Referências: `docs/instrumentacao-apps-lgtm.md`, ADR-024/031/040/041 do
-`gitops-plataform`. Base: `ObservabilityConfiguration` do MEDPlanner/VideoStream.
+> **Histórico (v0.1.0 → v0.2.0).** Os recursos eram opt-in aqui. Auditoria de
+> 2026-07-25 mediu o resultado: **nenhuma das 10 workloads passava
+> `extraTracing`** — todas deixaram `// DB via extraTracing = follow-up` no
+> código — e a produção tinha **zero span** de Mongo, Postgres, SQL Server,
+> Redis e S3. Opt-in que ninguém exerce é cobertura zero, então o default virou
+> "instrumentado".

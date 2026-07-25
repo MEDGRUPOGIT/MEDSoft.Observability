@@ -10,7 +10,11 @@
 
     <!-- Metadata de pacote (GitHub Packages: nuget.pkg.github.com/MEDGRUPOGIT). -->
     <PackageId>MEDSoft.Observability</PackageId>
-    <Version>0.1.0</Version>
+    <!-- 0.2.0: instrumentacao de RECURSO (Postgres/SQLServer/EFCore/Mongo/Redis/
+         AWS/RabbitMQ7) sai de `extraTracing` e entra no NUCLEO. Ver o XML doc de
+         ObservabilityServiceCollectionExtensions para o porque (o opt-in nunca
+         foi exercido por nenhuma das 10 workloads = cobertura zero medida). -->
+    <Version>0.2.0</Version>
     <Company>Medgrupo</Company>
     <Authors>Medgrupo Platform</Authors>
     <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado.</Description>
@@ -20,15 +24,38 @@
   </PropertyGroup>
 
   <!-- Conjunto 1.14.x validado pelo contrato ADR-031 (fixture PadraoOuro /
-       VideoStream / MEDPlanner). Instrumentation.AWS NAO entra no nucleo:
-       e app-especifico (via extraTracing) pra nao forcar dep de AWS em quem
-       nao usa; quem precisa fixa 1.14.2 (ultima que aceita core [1.14, 2.0)). -->
+       VideoStream / MEDPlanner).
+
+       v0.2.0: as instrumentacoes de RECURSO entram no nucleo. A decisao de
+       manter AWS fora ("pra nao forcar dep de AWS em quem nao usa") custou
+       caro: como NENHUM app passava extraTracing, o efeito real foi zero span
+       de recurso em producao. Bloat de dependencia transitiva num container
+       que ja carrega o runtime .NET inteiro e barato; cegueira nao e.
+
+       VERSOES: todas ja PROVADAS em producao na frota, nao escolhidas por
+       "ultima do NuGet" — o ambiente aqui nao tem dotnet SDK pra compilar, o
+       gate de compatibilidade e o CI.
+         AWS 1.14.2 ......... MEDSoft.VideoStream.Observability (ultima que
+                              aceita core [1.14, 2.0))
+         Redis 1.14.0-beta.1  VideoStream.Api + RealizaProva
+         EFCore 1.15.0-beta.1 RealizaProva (roda com core 1.14.0)
+         SqlClient 1.15.2 ... UNICA sem precedente na frota (ninguem instrumenta
+                              SQL Server hoje) — se o CI acusar conflito de
+                              core, o fallback e 1.14.0-rc.1.
+       Postgres e RabbitMQ 7 NAO tem PackageReference: sao AddSource de sources
+       nativos (ver comentarios no .cs). Npgsql.OpenTelemetry foi
+       DELIBERADAMENTE evitado: arrastaria Npgsql numa versao fixa e os apps
+       estao divididos entre 9 e 10. -->
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AWS" Version="1.14.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.15.0-beta.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.StackExchangeRedis" Version="1.14.0-beta.1" />
   </ItemGroup>
 
   <!-- AddAspNetCoreInstrumentation num classlib exige o framework ASP.NET
