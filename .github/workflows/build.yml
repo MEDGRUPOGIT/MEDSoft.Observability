@@ -1,0 +1,44 @@
+name: build
+
+# Gate de compilacao em PR. O publish.yml so roda em tag `v*`, entao ate aqui
+# um PR podia introduzir PackageReference incompativel e so quebrar DEPOIS do
+# merge, na hora de taggear — com o pacote ja mergeado na main.
+#
+# Motivador concreto (v0.2.0): as instrumentacoes de recurso entraram no nucleo
+# e nem todas as versoes tinham precedente na frota. Sem build em PR, a
+# validacao de compatibilidade do conjunto OTel acontecia tarde demais.
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Sem NUGET_TOKEN de proposito: este pacote depende SO de OpenTelemetry.*
+      # publico (nuget.org). Se um dia precisar de um MEDGRUPO.*/MEDSoft.*, o
+      # restore vai falhar aqui — e falhar cedo e o ponto.
+      - name: Restore
+        run: dotnet restore src/MEDSoft.Observability/MEDSoft.Observability.csproj
+
+      - name: Build (warnings de versao viram visiveis)
+        run: >
+          dotnet build -c Release --no-restore
+          src/MEDSoft.Observability/MEDSoft.Observability.csproj
+
+      # Pack valida o metadata do pacote (PackageReadmeFile, Version, etc.) sem
+      # publicar nada — o mesmo passo que o publish.yml faz antes do push.
+      - name: Pack (dry-run do publish)
+        run: >
+          dotnet pack -c Release --no-build -o ./nupkg
+          src/MEDSoft.Observability/MEDSoft.Observability.csproj
