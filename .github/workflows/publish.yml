@@ -16,6 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Guard (auditoria 2026-07-26, achado A10): a tag DEVE casar com o
+      # <Version> do csproj. Sem isto, taggear v0.4.0 com csproj 0.3.0
+      # republicaria 0.3.0 e o --skip-duplicate engoliria EM SILENCIO, com o
+      # run verde — bump fantasma que ninguem percebe.
+      - name: Valida tag == csproj <Version>
+        if: github.event_name == 'push'
+        run: |
+          V=$(grep -oP '(?<=<Version>)[^<]+' src/MEDSoft.Observability/MEDSoft.Observability.csproj)
+          if [ "v$V" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME nao casa com <Version>$V</Version> do csproj — bump o csproj ou re-tagueie."
+            exit 1
+          fi
+          echo "ok: tag $GITHUB_REF_NAME == csproj $V"
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'

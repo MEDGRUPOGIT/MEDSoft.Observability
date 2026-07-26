@@ -13,8 +13,12 @@
     <!-- 0.2.0: instrumentacao de RECURSO (Postgres/SQLServer/EFCore/Mongo/Redis/
          AWS/RabbitMQ7) sai de `extraTracing` e entra no NUCLEO. Ver o XML doc de
          ObservabilityServiceCollectionExtensions para o porque (o opt-in nunca
-         foi exercido por nenhuma das 10 workloads = cobertura zero medida). -->
-    <Version>0.2.0</Version>
+         foi exercido por nenhuma das 10 workloads = cobertura zero medida).
+         0.3.0 (auditoria OTel 2026-07-26): linha OpenTelemetry 1.17.0; resource
+         UNICO com service.version; envs OTLP padrao respeitadas; filtro default
+         de health checks (parametro novo filterHealthChecks). Minor, nao patch:
+         muda o comportamento emitido e a superficie da API. -->
+    <Version>0.3.0</Version>
     <Company>Medgrupo</Company>
     <Authors>Medgrupo Platform</Authors>
     <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado.</Description>
@@ -23,43 +27,46 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
-  <!-- Conjunto 1.14.x validado pelo contrato ADR-031 (fixture PadraoOuro /
-       VideoStream / MEDPlanner).
-
-       v0.2.0: as instrumentacoes de RECURSO entram no nucleo. A decisao de
-       manter AWS fora ("pra nao forcar dep de AWS em quem nao usa") custou
-       caro: como NENHUM app passava extraTracing, o efeito real foi zero span
-       de recurso em producao. Bloat de dependencia transitiva num container
-       que ja carrega o runtime .NET inteiro e barato; cegueira nao e.
-
-       VERSOES: todas ja PROVADAS em producao na frota, nao escolhidas por
-       "ultima do NuGet" — o ambiente aqui nao tem dotnet SDK pra compilar, o
-       gate de compatibilidade e o CI.
-         AWS 1.14.2 ......... MEDSoft.VideoStream.Observability (ultima que
-                              aceita core [1.14, 2.0))
-         Redis 1.14.0-beta.1  VideoStream.Api + RealizaProva
-         EFCore 1.15.0-beta.1 RealizaProva (roda com core 1.14.0)
-         SqlClient 1.15.2 ... UNICA sem precedente na frota (ninguem instrumenta
-                              SQL Server hoje) — se o CI acusar conflito de
-                              core, o fallback e 1.14.0-rc.1.
-       Postgres e RabbitMQ 7 NAO tem PackageReference: sao AddSource de sources
-       nativos (ver comentarios no .cs). Npgsql.OpenTelemetry foi
-       DELIBERADAMENTE evitado: arrastaria Npgsql numa versao fixa e os apps
-       estao divididos entre 9 e 10. -->
+  <!-- LINHA 1.17.0 (v0.3.0) — por que saiu do "1.14.x provado na frota":
+       a auditoria de 2026-07-26 mediu que o pin era ficcao em runtime.
+       1) PackageReference e PISO, nao trava: SqlClient 1.15.2 ja puxava
+          OpenTelemetry.Api.ProviderBuilderExtensions 1.15.3 (set misto
+          SILENCIOSO, sem NU1605), e os grafos dos apps resolviam acima —
+          medido em prod: tagger com SDK 1.15.0, autorizacao exportando com
+          UA OTel-OTLP-Exporter-Dotnet/1.16.0. "Provado 1.14.x" descrevia o
+          csproj, nao o runtime.
+       2) O exporter 1.14.0 carrega 3 CVEs medium (GHSA-4625-4j76-fww9,
+          GHSA-mr8r-92fq-pj8p, GHSA-q834-8qmm-v933), todas corrigidas ate a
+          1.15.3. Exposicao atual baixa (retry experimental off, gRPC), mas o
+          bump fecha CVE + grafo misto de uma vez.
+       3) 1.17.0 e a linha atual lancada em CONJUNTO (core + contribs) — o
+          grafo resolve homogeneo. EFCore e StackExchangeRedis nao tem release
+          estavel NENHUMA no NuGet (so betas): o warning NU5104 e inevitavel,
+          nao um erro deste csproj.
+       4) AWS 1.16.0 trouxe breaking de semconv (AWS 1.40) em atributos
+          aws.*/cloud.region — sem consumidor medido hoje (zero span AWS
+          observado na auditoria); revisar dashboards aws.* quando nascerem.
+       Postgres e RabbitMQ 7 seguem SEM PackageReference: sao AddSource de
+       sources nativos (ver comentarios no .cs). Npgsql.OpenTelemetry continua
+       DELIBERADAMENTE evitado (arrastaria Npgsql fixo; apps divididos entre
+       9 e 10 — os dois dialetos de metrica que isso gera sao tolerados pelas
+       rules da plataforma desde gitops#776). -->
   <ItemGroup>
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AWS" Version="1.14.2" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.15.0-beta.1" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.15.2" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.StackExchangeRedis" Version="1.14.0-beta.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AWS" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.17.0-beta.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.StackExchangeRedis" Version="1.17.0-beta.1" />
   </ItemGroup>
 
   <!-- AddAspNetCoreInstrumentation num classlib exige o framework ASP.NET
-       (mesmo padrao da fixture PadraoOuro). Inofensivo em Worker/Integration. -->
+       (mesmo padrao da fixture PadraoOuro). Inofensivo em Worker/Integration
+       DESDE QUE a imagem base seja `aspnet` (nao `runtime`/`runtime-deps` —
+       nessas o shared framework nao existe e o app quebra no boot). -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
