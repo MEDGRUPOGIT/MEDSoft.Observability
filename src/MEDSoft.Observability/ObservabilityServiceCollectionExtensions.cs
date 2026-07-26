@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using OpenTelemetry.Exporter;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -28,6 +27,15 @@ namespace MEDSoft.Observability;
 /// Postgres, SQL Server, Redis ou S3 em produção. Opt-in que ninguém exerce é
 /// cobertura zero — o default passa a ser "instrumentado".</para>
 ///
+/// <para><b>v0.3.0 (auditoria OTel 2026-07-26).</b> Linha OpenTelemetry 1.17.0
+/// (fecha as 3 CVEs do exporter 1.14.0 e o grafo misto — o runtime real já
+/// resolvia 1.15/1.16 por cima do pin); resource ÚNICO para os três sinais,
+/// agora com <c>service.version</c> (env <c>OTEL_SERVICE_VERSION</c>); as envs
+/// OTLP padrão passam a ser respeitadas (<c>OTEL_EXPORTER_OTLP_PROTOCOL</c> e
+/// endpoints por sinal — antes eram neutralizadas por override no código); e
+/// os traces ASP.NET Core ganham filtro default de health checks
+/// (<paramref name="filterHealthChecks"/>).</para>
+///
 /// <para>Segue app-específico via <paramref name="extraTracing"/>/<paramref name="extraMetrics"/>:
 /// <c>ActivitySource</c>/<c>Meter</c> custom do domínio.</para>
 ///
@@ -36,7 +44,9 @@ namespace MEDSoft.Observability;
 ///   <item><c>instrumentation.opentelemetry.io/inject-dotnet: "false"</c> —
 ///     auto-inject (CLR profiler) + SDK in-process juntos crasham (exit 139).</item>
 ///   <item><c>medgrupo.io/logs: "otlp"</c> — dedup do stdout após validar OTLP.</item>
-///   <item>chart <c>medgrupo-prod-app &gt;= 0.5.12</c> injeta <c>OTEL_SERVICE_NAME</c>.</item>
+///   <item>chart <c>medgrupo-prod-app &gt;= 0.5.12</c> injeta <c>OTEL_SERVICE_NAME</c>;
+///     quando disponível, injetar também <c>OTEL_SERVICE_VERSION</c> = tag da
+///     imagem (habilita "o deploy piorou?" por atribuição direta — ADR-043).</item>
 /// </list>
 /// </summary>
 public static class ObservabilityServiceCollectionExtensions
@@ -48,36 +58,46 @@ public static class ObservabilityServiceCollectionExtensions
     /// <param name="extraTracing">Instrumentações de trace específicas do app (DB/AWS/MQ/sources custom).</param>
     /// <param name="extraMetrics">Meters específicos do app.</param>
     /// <param name="enableGenAI">Registra sources/meters <c>Microsoft.SemanticKernel*</c> (gen_ai.* — o app liga o switch experimental do SK, não-sensível; ADR-041).</param>
+    /// <param name="filterHealthChecks">Descarta spans de probe (<c>/health*</c>, <c>/healthz</c>, <c>/ready</c>, <c>/live</c>, <c>/alive</c>) na origem — sem sampler no app, cada probe do kubelet viraria span exportado (o drop_ci do coletor descarta lá, mas o custo de wire/CPU do app fica). Desligue por app se probes precisarem de trace.</param>
     public static IServiceCollection AddMEDSoftObservability(
         this IServiceCollection services,
         bool isWebApp = false,
         Action<TracerProviderBuilder>? extraTracing = null,
         Action<MeterProviderBuilder>? extraMetrics = null,
-        bool enableGenAI = false)
+        bool enableGenAI = false,
+        bool filterHealthChecks = true)
     {
-        // Endpoint OTLP: respeita OTEL_EXPORTER_OTLP_ENDPOINT (ConfigMap do K8s ->
-        // alloy-receiver -> LGTM). Fallback = default do SDK (localhost:4317, dev).
-        var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
-
         // OTEL_SERVICE_NAME (chart >= 0.5.12 = nome do workload k8s) tem
         // precedência; fallback pro nome do processo (dev local). Nunca cravar o
         // nome no código (ADR-024, "um sinal, um dono").
         var resolvedServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
             ?? AppDomain.CurrentDomain.FriendlyName;
 
-        void ConfigureOtlp(OtlpExporterOptions options)
-        {
-            if (!string.IsNullOrWhiteSpace(otlpEndpoint))
-            {
-                options.Endpoint = new Uri(otlpEndpoint);
-            }
+        // service.version (ADR-043, item 3): canal = OTEL_SERVICE_VERSION
+        // (chart injeta a tag da imagem). SEM fallback de assembly de
+        // propósito — o default 1.0.0.0 mentiria e atropelaria quem popular
+        // service.version via OTEL_RESOURCE_ATTRIBUTES (o detector de env do
+        // CreateDefault lê essa var; AddService por cima dela VENCE).
+        var resolvedServiceVersion = Environment.GetEnvironmentVariable("OTEL_SERVICE_VERSION");
 
-            options.Protocol = OtlpExportProtocol.Grpc;
-        }
+        // Resource ÚNICO para traces, métricas E logs — atributo novo entra num
+        // lugar só e os três sinais saem idênticos (correlação por resource,
+        // ADR-031). Era o ponto frágil da auditoria: o resource dos logs era
+        // construído à parte e divergiria em silêncio ao primeiro atributo novo.
+        void ConfigureSharedResource(ResourceBuilder res) => res.AddService(
+            resolvedServiceName,
+            serviceVersion: string.IsNullOrWhiteSpace(resolvedServiceVersion) ? null : resolvedServiceVersion);
+
+        // v0.3.0: SEM delegate de exporter. O OtlpExporterOptions do SDK já lê
+        // sozinho OTEL_EXPORTER_OTLP_ENDPOINT, as variantes por sinal
+        // (OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT) e
+        // OTEL_EXPORTER_OTLP_PROTOCOL — e em net8+ o default de protocolo JÁ é
+        // gRPC. O override antigo (Endpoint + Protocol=Grpc em código) era
+        // redundante no caminho feliz e NEUTRALIZAVA as envs por sinal e a
+        // migração de protocolo (achado A6 da auditoria 2026-07-26).
 
         services.AddOpenTelemetry()
-            .ConfigureResource(res => res
-                .AddService(resolvedServiceName))
+            .ConfigureResource(ConfigureSharedResource)
             .WithTracing(tracer =>
             {
                 tracer
@@ -97,6 +117,10 @@ public static class ObservabilityServiceCollectionExtensions
                     // uma dependência de Npgsql numa versão fixa — o pacote é
                     // consumido por apps em Npgsql 9 E 10, e forçar 10 seria
                     // conflito REAL de versão (não é bloat, é build quebrado).
+                    // NOTA: 9 e 10 emitem DIALETOS diferentes de métrica/atributo
+                    // (db_client_commands_* × db_client_operation_*; db.system ×
+                    // db.system.name) — as rules da plataforma toleram os dois
+                    // (gitops#776).
                     .AddSource("Npgsql")
 
                     // RabbitMQ.Client 7 — sources NATIVOS (não há pacote de
@@ -136,13 +160,37 @@ public static class ObservabilityServiceCollectionExtensions
                     // generalização — autenticacao publica em SNS e apostilas usa
                     // S3, ambos invisíveis. O zero-code (CLR profiler) TAMBÉM não
                     // cobre AWS SDK, então sem isto não há span por nenhuma via.
+                    // PRÉ-REQUISITO: Instrumentation.AWS >= 1.12 exige AWSSDK v4
+                    // transitivo — app ainda em AWSSDK v3 precisa migrar antes de
+                    // adotar o pacote (major com breaking changes).
                     .AddAWSInstrumentation();
 
                 if (isWebApp)
                 {
-                    // RecordException: grava exception events (status=Error) nos
-                    // spans de request que escapem pro pipeline ASP.NET.
-                    tracer.AddAspNetCoreInstrumentation(options => options.RecordException = true);
+                    tracer.AddAspNetCoreInstrumentation(options =>
+                    {
+                        // RecordException: grava exception events (status=Error)
+                        // nos spans de request que escapem pro pipeline ASP.NET.
+                        options.RecordException = true;
+
+                        if (filterHealthChecks)
+                        {
+                            // Probes do kubelet a cada poucos segundos viram span
+                            // exportado (não há sampler no app). O coletor já
+                            // descarta no drop_ci — filtrar NA ORIGEM poupa o
+                            // wire/CPU do app. Cobre os paths da frota
+                            // (readiness /health/live/ incluso, via prefixo).
+                            options.Filter = ctx =>
+                            {
+                                var path = ctx.Request.Path.Value ?? string.Empty;
+                                return !(path.StartsWith("/health", StringComparison.OrdinalIgnoreCase)
+                                         || path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+                                         || path.Equals("/ready", StringComparison.OrdinalIgnoreCase)
+                                         || path.Equals("/live", StringComparison.OrdinalIgnoreCase)
+                                         || path.Equals("/alive", StringComparison.OrdinalIgnoreCase));
+                            };
+                        }
+                    });
                 }
 
                 if (enableGenAI)
@@ -153,11 +201,10 @@ public static class ObservabilityServiceCollectionExtensions
                     tracer.AddSource("Microsoft.SemanticKernel*");
                 }
 
-                // Instrumentações específicas do app (EFCore/Npgsql/Redis/Mongo/
-                // AWS/RabbitMQ.Client 7/sources custom).
+                // Instrumentações específicas do app (sources custom do domínio).
                 extraTracing?.Invoke(tracer);
 
-                tracer.AddOtlpExporter(ConfigureOtlp);
+                tracer.AddOtlpExporter();
             })
             .WithMetrics(metrics =>
             {
@@ -169,9 +216,9 @@ public static class ObservabilityServiceCollectionExtensions
                     .AddMeter("MEDGRUPO.ServiceConnect")
 
                     // ---- Métricas de RECURSO (v0.2.0) ----
-                    // Alimentam `db_client_operation_duration_*`, que as recording
-                    // rules `db_client:*` da plataforma consomem (RED de banco por
-                    // db_system_name/service_name/server_address).
+                    // Alimentam db_client_(operation|commands)_duration_* — os
+                    // DOIS dialetos do Npgsql (10 e <=9) são consumidos pelas
+                    // recording rules `db_client:*` da plataforma (gitops#776).
                     // AddMeter por NOME é seguro: meter inexistente é no-op, não erro.
                     .AddMeter("Npgsql")
                     .AddMeter("OpenTelemetry.Instrumentation.SqlClient");
@@ -191,17 +238,23 @@ public static class ObservabilityServiceCollectionExtensions
 
                 // OTLP push (ADR-013): NÃO usar PrometheusExporter — sem endpoint
                 // de scrape mapeado, as métricas não saem do processo.
-                metrics.AddOtlpExporter(ConfigureOtlp);
+                metrics.AddOtlpExporter();
             })
             // Logs do ILogger via OTLP — correlação Log↔Trace no LGTM. A
             // plataforma liga a ponte; os devs escrevem os statements de log.
             .WithLogging(
-                logging => logging
-                    // Resource do log explícito: o ConfigureResource unificado NÃO
-                    // aplica no provider de log do host (ficaria no ApplicationName,
-                    // divergindo do trace). Mesmo service.name (ADR-024).
-                    .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(resolvedServiceName))
-                    .AddOtlpExporter(ConfigureOtlp),
+                logging =>
+                {
+                    // Mesmo resource dos traces/métricas, construído pela MESMA
+                    // action (o ConfigureResource do builder unificado não
+                    // alcança o provider de log do host; construir à parte era o
+                    // jeito de quebrar a correlação em silêncio).
+                    var logResource = ResourceBuilder.CreateDefault();
+                    ConfigureSharedResource(logResource);
+                    logging
+                        .SetResourceBuilder(logResource)
+                        .AddOtlpExporter();
+                },
                 options =>
                 {
                     options.IncludeFormattedMessage = true;
