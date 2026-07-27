@@ -66,8 +66,14 @@ jobs:
           # (aconteceu no PR #5 — guard verde sem inspecionar nuspec nenhum).
           # Em assignment, sob bash -e, a falha do unzip derruba o step.
           NUSPEC=$(unzip -p "./nupkg/MEDSoft.Observability.$V.nupkg" '*.nuspec')
-          if echo "$NUSPEC" | grep -qi 'aspnetcore'; then
-            echo "::error::o nucleo voltou a referenciar AspNetCore — workers em base runtime quebrariam no boot (issue #4)."
+          # Match ESTRUTURAL, nunca texto livre: a <description> do nucleo cita
+          # "MEDSoft.Observability.AspNetCore" de proposito (aponta o satelite
+          # pro leitor) — um grep no nuspec inteiro falharia nela. O que o
+          # nucleo NAO pode ter e dependencia AspNetCore ou frameworkReference
+          # (qualquer uma; hoje a unica que existiria e a do ASP.NET). Pattern
+          # provado contra os nuspec reais 0.4.0: nucleo=limpo, satelite=detecta.
+          if echo "$NUSPEC" | grep -qiE '<dependency id="[^"]*AspNetCore|<frameworkReference'; then
+            echo "::error::o nucleo voltou a referenciar AspNetCore (dependency ou frameworkReference) — workers em base runtime quebrariam no boot (issue #4)."
             exit 1
           fi
-          echo "ok: nuspec do nucleo $V inspecionado, sem aspnetcore"
+          echo "ok: nuspec do nucleo $V inspecionado — sem dependency AspNetCore, sem frameworkReference"
