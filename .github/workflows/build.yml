@@ -58,9 +58,16 @@ jobs:
       # (prefixo), que cita aspnetcore por design.
       - name: Guard nucleo framework-neutro
         run: |
-          V=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
-          if unzip -p "./nupkg/MEDSoft.Observability.$V.nupkg" '*.nuspec' | grep -qi 'aspnetcore'; then
+          # \K + ancora de digito + -m1: comentarios citam "<Version>" em
+          # prosa; lookbehind ingenuo casava o comentario e o V virava lixo.
+          V=$(grep -oPm1 '<Version>\K[0-9][^<]*' Directory.Build.props)
+          # unzip FORA do pipe de proposito: dentro de `if cmd | grep`, um
+          # unzip que nao acha o arquivo e engolido e o guard "passa" VAZIO
+          # (aconteceu no PR #5 — guard verde sem inspecionar nuspec nenhum).
+          # Em assignment, sob bash -e, a falha do unzip derruba o step.
+          NUSPEC=$(unzip -p "./nupkg/MEDSoft.Observability.$V.nupkg" '*.nuspec')
+          if echo "$NUSPEC" | grep -qi 'aspnetcore'; then
             echo "::error::o nucleo voltou a referenciar AspNetCore — workers em base runtime quebrariam no boot (issue #4)."
             exit 1
           fi
-          echo "ok: nuspec do nucleo $V sem aspnetcore"
+          echo "ok: nuspec do nucleo $V inspecionado, sem aspnetcore"

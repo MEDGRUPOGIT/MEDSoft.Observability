@@ -29,7 +29,11 @@ jobs:
       - name: Valida tag == <Version> (Directory.Build.props, lockstep)
         if: github.event_name == 'push'
         run: |
-          V=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
+          # \K + ancora de digito + -m1: os COMENTARIOS deste repo citam
+          # "<Version>" em prosa — um lookbehind ingenuo casa o comentario e
+          # devolve lixo multi-linha (foi exatamente o que quebrou o publish
+          # da v0.4.0). Digito inicial = so o elemento real casa.
+          V=$(grep -oPm1 '<Version>\K[0-9][^<]*' Directory.Build.props)
           if [ "v$V" != "$GITHUB_REF_NAME" ]; then
             echo "::error::tag $GITHUB_REF_NAME nao casa com <Version>$V</Version> do Directory.Build.props — bump o props ou re-tagueie."
             exit 1
@@ -38,7 +42,9 @@ jobs:
           # (project body avalia depois do import). Um csproj com Version
           # esquecida = pacote publicado com versao velha + --skip-duplicate
           # engolindo — o bump fantasma de novo, agora so em UM dos pacotes.
-          if grep -rl '<Version>' src --include='*.csproj'; then
+          # ^\s* = so ELEMENTO declarado (comentarios mencionam <Version> em
+          # meio de frase e nao podem dar falso positivo).
+          if grep -rlP '^\s*<Version>' src --include='*.csproj'; then
             echo "::error::csproj redeclara <Version> — a versao mora SO no Directory.Build.props (lockstep)."
             exit 1
           fi
