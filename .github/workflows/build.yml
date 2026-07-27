@@ -58,9 +58,22 @@ jobs:
       # (prefixo), que cita aspnetcore por design.
       - name: Guard nucleo framework-neutro
         run: |
-          V=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
-          if unzip -p "./nupkg/MEDSoft.Observability.$V.nupkg" '*.nuspec' | grep -qi 'aspnetcore'; then
-            echo "::error::o nucleo voltou a referenciar AspNetCore — workers em base runtime quebrariam no boot (issue #4)."
+          # \K + ancora de digito + -m1: comentarios citam "<Version>" em
+          # prosa; lookbehind ingenuo casava o comentario e o V virava lixo.
+          V=$(grep -oPm1 '<Version>\K[0-9][^<]*' Directory.Build.props)
+          # unzip FORA do pipe de proposito: dentro de `if cmd | grep`, um
+          # unzip que nao acha o arquivo e engolido e o guard "passa" VAZIO
+          # (aconteceu no PR #5 — guard verde sem inspecionar nuspec nenhum).
+          # Em assignment, sob bash -e, a falha do unzip derruba o step.
+          NUSPEC=$(unzip -p "./nupkg/MEDSoft.Observability.$V.nupkg" '*.nuspec')
+          # Match ESTRUTURAL, nunca texto livre: a <description> do nucleo cita
+          # "MEDSoft.Observability.AspNetCore" de proposito (aponta o satelite
+          # pro leitor) — um grep no nuspec inteiro falharia nela. O que o
+          # nucleo NAO pode ter e dependencia AspNetCore ou frameworkReference
+          # (qualquer uma; hoje a unica que existiria e a do ASP.NET). Pattern
+          # provado contra os nuspec reais 0.4.0: nucleo=limpo, satelite=detecta.
+          if echo "$NUSPEC" | grep -qiE '<dependency id="[^"]*AspNetCore|<frameworkReference'; then
+            echo "::error::o nucleo voltou a referenciar AspNetCore (dependency ou frameworkReference) — workers em base runtime quebrariam no boot (issue #4)."
             exit 1
           fi
-          echo "ok: nuspec do nucleo $V sem aspnetcore"
+          echo "ok: nuspec do nucleo $V inspecionado — sem dependency AspNetCore, sem frameworkReference"
