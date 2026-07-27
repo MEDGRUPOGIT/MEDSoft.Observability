@@ -1,9 +1,12 @@
 name: publish
 
-# Publica o pacote no GitHub Packages (nuget.pkg.github.com/MEDGRUPOGIT) ao
-# criar uma tag vX.Y.Z. Versao vem do .csproj (bump = editar Version + taggear).
-# Apos o push, o mesmo artefato vai pro feed S3 interno (Sleet, ADR-044 do
-# gitops-platform) — leitura sem credencial por rede interna, o caminho dos devs.
+# Publica os pacotes no GitHub Packages (nuget.pkg.github.com/MEDGRUPOGIT) ao
+# criar uma tag vX.Y.Z. Versao vem do Directory.Build.props (bump = editar
+# <Version> la + taggear; lockstep — todos os pacotes do repo saem juntos, na
+# mesma versao). Apos o push, o mesmo artefato vai pro feed S3 interno (Sleet,
+# ADR-044 do gitops-platform) — leitura sem credencial por rede interna, o
+# caminho dos devs. Publish parcial (falha entre pushes) = RE-RUN, nunca
+# re-tag: --skip-duplicate/--skip-existing tornam o job idempotente.
 on:
   push:
     tags: [ 'v*' ]
@@ -20,18 +23,26 @@ jobs:
       - uses: actions/checkout@v4
 
       # Guard (auditoria 2026-07-26, achado A10): a tag DEVE casar com o
-      # <Version> do csproj. Sem isto, taggear v0.4.0 com csproj 0.3.0
-      # republicaria 0.3.0 e o --skip-duplicate engoliria EM SILENCIO, com o
-      # run verde — bump fantasma que ninguem percebe.
-      - name: Valida tag == csproj <Version>
+      # <Version> do Directory.Build.props. Sem isto, taggear v0.4.0 com props
+      # 0.3.0 republicaria 0.3.0 e o --skip-duplicate engoliria EM SILENCIO,
+      # com o run verde — bump fantasma que ninguem percebe.
+      - name: Valida tag == <Version> (Directory.Build.props, lockstep)
         if: github.event_name == 'push'
         run: |
-          V=$(grep -oP '(?<=<Version>)[^<]+' src/MEDSoft.Observability/MEDSoft.Observability.csproj)
+          V=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
           if [ "v$V" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME nao casa com <Version>$V</Version> do csproj — bump o csproj ou re-tagueie."
+            echo "::error::tag $GITHUB_REF_NAME nao casa com <Version>$V</Version> do Directory.Build.props — bump o props ou re-tagueie."
             exit 1
           fi
-          echo "ok: tag $GITHUB_REF_NAME == csproj $V"
+          # Anti-divergencia: <Version> num csproj VENCE o props EM SILENCIO
+          # (project body avalia depois do import). Um csproj com Version
+          # esquecida = pacote publicado com versao velha + --skip-duplicate
+          # engolindo — o bump fantasma de novo, agora so em UM dos pacotes.
+          if grep -rl '<Version>' src --include='*.csproj'; then
+            echo "::error::csproj redeclara <Version> — a versao mora SO no Directory.Build.props (lockstep)."
+            exit 1
+          fi
+          echo "ok: tag $GITHUB_REF_NAME == props $V, nenhum csproj diverge"
 
       - uses: actions/setup-dotnet@v4
         with:
