@@ -1,10 +1,19 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 namespace MEDSoft.Observability;
+
+/// <summary>
+/// Marcador interno: prova que o pipeline do núcleo (resource + exporters) foi
+/// registrado. O satélite <c>MEDSoft.Observability.AspNetCore</c> checa isto
+/// para falhar ALTO no boot em vez de exportar nada em silêncio (spans num
+/// pipeline sem exporter são gravados e descartados sem erro nenhum). Não use.
+/// </summary>
+public sealed class MEDSoftObservabilityMarker { }
 
 /// <summary>
 /// Configuração OTel in-process compartilhada de TODO app .NET do MEDSoft
@@ -15,9 +24,20 @@ namespace MEDSoft.Observability;
 ///
 /// Núcleo (todo app, sem config): HttpClient, sources/meters
 /// <c>MEDGRUPO.Messaging</c>/<c>MEDGRUPO.ServiceConnect</c> (da MEDGRUPO.SDK),
-/// runtime metrics (<c>dotnet_*</c>), AspNetCore (se <paramref name="isWebApp"/>),
-/// logging — e, desde a v0.2.0, os RECURSOS: PostgreSQL (Npgsql), SQL Server,
-/// EF Core, MongoDB, Redis, AWS SDK e RabbitMQ.Client 7.
+/// runtime metrics (<c>dotnet_*</c>), logging — e, desde a v0.2.0, os RECURSOS:
+/// PostgreSQL (Npgsql), SQL Server, EF Core, MongoDB, Redis, AWS SDK e
+/// RabbitMQ.Client 7.
+///
+/// <para><b>v0.4.0 (issue #4) — núcleo FRAMEWORK-NEUTRO.</b> A instrumentação
+/// ASP.NET Core saiu para o pacote satélite
+/// <c>MEDSoft.Observability.AspNetCore</c> (e com ela o
+/// <c>FrameworkReference Microsoft.AspNetCore.App</c> que forçava TODO worker
+/// à imagem base <c>aspnet</c>). Worker referencia SÓ este núcleo e roda em
+/// base <c>runtime</c>; app web referencia os dois e chama
+/// <c>AddMEDSoftAspNetCoreObservability()</c> depois deste método — os dois
+/// alimentam o MESMO pipeline OTel. O parâmetro <c>isWebApp</c> se aposentou:
+/// remoção deliberadamente BARULHENTA (chamada antiga não compila), nada de
+/// telemetria sumindo em silêncio por um bool esquecido.</para>
 ///
 /// <para><b>Por que os recursos vieram pro núcleo (v0.2.0).</b> Na v0.1.0 eram
 /// opt-in via <paramref name="extraTracing"/>. Auditoria de 2026-07-25:
@@ -32,9 +52,7 @@ namespace MEDSoft.Observability;
 /// resolvia 1.15/1.16 por cima do pin); resource ÚNICO para os três sinais,
 /// agora com <c>service.version</c> (env <c>OTEL_SERVICE_VERSION</c>); as envs
 /// OTLP padrão passam a ser respeitadas (<c>OTEL_EXPORTER_OTLP_PROTOCOL</c> e
-/// endpoints por sinal — antes eram neutralizadas por override no código); e
-/// os traces ASP.NET Core ganham filtro default de health checks
-/// (<paramref name="filterHealthChecks"/>).</para>
+/// endpoints por sinal — antes eram neutralizadas por override no código).</para>
 ///
 /// <para>Segue app-específico via <paramref name="extraTracing"/>/<paramref name="extraMetrics"/>:
 /// <c>ActivitySource</c>/<c>Meter</c> custom do domínio.</para>
@@ -45,28 +63,30 @@ namespace MEDSoft.Observability;
 ///     auto-inject (CLR profiler) + SDK in-process juntos crasham (exit 139).</item>
 ///   <item><c>medgrupo.io/logs: "otlp"</c> — dedup do stdout após validar OTLP.</item>
 ///   <item>chart <c>medgrupo-prod-app &gt;= 0.5.12</c> injeta <c>OTEL_SERVICE_NAME</c>;
-///     quando disponível, injetar também <c>OTEL_SERVICE_VERSION</c> = tag da
+///     <c>&gt;= 0.5.15</c> injeta também <c>OTEL_SERVICE_VERSION</c> = tag da
 ///     imagem (habilita "o deploy piorou?" por atribuição direta — ADR-043).</item>
 /// </list>
 /// </summary>
 public static class ObservabilityServiceCollectionExtensions
 {
     /// <summary>
-    /// Registra o pipeline OTel (traces/métricas/logs) do MEDSoft.
+    /// Registra o pipeline OTel (traces/métricas/logs) do MEDSoft. App web:
+    /// chame também <c>AddMEDSoftAspNetCoreObservability()</c> do pacote
+    /// <c>MEDSoft.Observability.AspNetCore</c> (DEPOIS deste — ele valida a
+    /// ordem e falha alto se o núcleo não estiver registrado).
     /// </summary>
-    /// <param name="isWebApp">Liga a instrumentação ASP.NET Core (server span + http.server metrics).</param>
-    /// <param name="extraTracing">Instrumentações de trace específicas do app (DB/AWS/MQ/sources custom).</param>
+    /// <param name="extraTracing">Instrumentações de trace específicas do app (sources custom do domínio).</param>
     /// <param name="extraMetrics">Meters específicos do app.</param>
     /// <param name="enableGenAI">Registra sources/meters <c>Microsoft.SemanticKernel*</c> (gen_ai.* — o app liga o switch experimental do SK, não-sensível; ADR-041).</param>
-    /// <param name="filterHealthChecks">Descarta spans de probe (<c>/health*</c>, <c>/healthz</c>, <c>/ready</c>, <c>/live</c>, <c>/alive</c>) na origem — sem sampler no app, cada probe do kubelet viraria span exportado (o drop_ci do coletor descarta lá, mas o custo de wire/CPU do app fica). Desligue por app se probes precisarem de trace.</param>
     public static IServiceCollection AddMEDSoftObservability(
         this IServiceCollection services,
-        bool isWebApp = false,
         Action<TracerProviderBuilder>? extraTracing = null,
         Action<MeterProviderBuilder>? extraMetrics = null,
-        bool enableGenAI = false,
-        bool filterHealthChecks = true)
+        bool enableGenAI = false)
     {
+        // Marcador lido pelo satélite (fail-fast de ordem/ausência do núcleo).
+        services.TryAddSingleton<MEDSoftObservabilityMarker>();
+
         // OTEL_SERVICE_NAME (chart >= 0.5.12 = nome do workload k8s) tem
         // precedência; fallback pro nome do processo (dev local). Nunca cravar o
         // nome no código (ADR-024, "um sinal, um dono").
@@ -165,34 +185,6 @@ public static class ObservabilityServiceCollectionExtensions
                     // adotar o pacote (major com breaking changes).
                     .AddAWSInstrumentation();
 
-                if (isWebApp)
-                {
-                    tracer.AddAspNetCoreInstrumentation(options =>
-                    {
-                        // RecordException: grava exception events (status=Error)
-                        // nos spans de request que escapem pro pipeline ASP.NET.
-                        options.RecordException = true;
-
-                        if (filterHealthChecks)
-                        {
-                            // Probes do kubelet a cada poucos segundos viram span
-                            // exportado (não há sampler no app). O coletor já
-                            // descarta no drop_ci — filtrar NA ORIGEM poupa o
-                            // wire/CPU do app. Cobre os paths da frota
-                            // (readiness /health/live/ incluso, via prefixo).
-                            options.Filter = ctx =>
-                            {
-                                var path = ctx.Request.Path.Value ?? string.Empty;
-                                return !(path.StartsWith("/health", StringComparison.OrdinalIgnoreCase)
-                                         || path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
-                                         || path.Equals("/ready", StringComparison.OrdinalIgnoreCase)
-                                         || path.Equals("/live", StringComparison.OrdinalIgnoreCase)
-                                         || path.Equals("/alive", StringComparison.OrdinalIgnoreCase));
-                            };
-                        }
-                    });
-                }
-
                 if (enableGenAI)
                 {
                     // Semantic Kernel: chat/embeddings + gen_ai.* (o app precisa
@@ -222,11 +214,6 @@ public static class ObservabilityServiceCollectionExtensions
                     // AddMeter por NOME é seguro: meter inexistente é no-op, não erro.
                     .AddMeter("Npgsql")
                     .AddMeter("OpenTelemetry.Instrumentation.SqlClient");
-
-                if (isWebApp)
-                {
-                    metrics.AddAspNetCoreInstrumentation();
-                }
 
                 if (enableGenAI)
                 {

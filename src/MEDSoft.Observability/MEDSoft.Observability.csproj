@@ -5,7 +5,7 @@
          props na raiz (versao unica do repo — NAO redeclarar <Version> aqui;
          o guard do publish barra a divergencia). -->
     <PackageId>MEDSoft.Observability</PackageId>
-    <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado.</Description>
+    <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado. NUCLEO framework-neutro — worker roda em imagem base `runtime`; app web adiciona MEDSoft.Observability.AspNetCore (issue #4).</Description>
   </PropertyGroup>
 
   <!-- LINHA 1.17.0 (v0.3.0) — por que saiu do "1.14.x provado na frota":
@@ -32,24 +32,21 @@
        DELIBERADAMENTE evitado (arrastaria Npgsql fixo; apps divididos entre
        9 e 10 — os dois dialetos de metrica que isso gera sao tolerados pelas
        rules da plataforma desde gitops#776). -->
+  <!-- SEM Instrumentation.AspNetCore DE PROPOSITO (issue #4, v0.4.0): ela
+       carrega FrameworkReference Microsoft.AspNetCore.App no proprio nuspec,
+       o que forcava TODO worker a imagem base `aspnet` (em `runtime` o shared
+       framework nao existe e o app quebra no boot). O lado ASP.NET vive no
+       satelite MEDSoft.Observability.AspNetCore; o build.yml tem guard que
+       barra regressao (nuspec do nucleo nunca pode citar aspnetcore). -->
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AWS" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.17.0-beta.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.StackExchangeRedis" Version="1.17.0-beta.1" />
-  </ItemGroup>
-
-  <!-- AddAspNetCoreInstrumentation num classlib exige o framework ASP.NET
-       (mesmo padrao da fixture PadraoOuro). Inofensivo em Worker/Integration
-       DESDE QUE a imagem base seja `aspnet` (nao `runtime`/`runtime-deps` —
-       nessas o shared framework nao existe e o app quebra no boot). -->
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
 </Project>
