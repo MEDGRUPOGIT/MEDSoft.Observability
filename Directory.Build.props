@@ -13,8 +13,14 @@
          0.3.0 — (auditoria OTel 2026-07-26) linha OpenTelemetry 1.17.0;
                  resource UNICO com service.version; envs OTLP padrao
                  respeitadas; filtro default de health checks; guard de
-                 publish (tag deve casar com a versao). -->
-    <Version>0.3.0</Version>
+                 publish (tag deve casar com a versao).
+         0.4.0 — (issue #4, BREAKING) split: nucleo framework-neutro (worker
+                 volta pra imagem base `runtime`) + satelite MEDSoft.
+                 Observability.AspNetCore (AddMEDSoftAspNetCoreObservability
+                 com filterHealthChecks e additionalFilter); `isWebApp` e
+                 `filterHealthChecks` sairam do nucleo (barulhento de
+                 proposito — chamada antiga nao compila). -->
+    <Version>0.4.0</Version>
 
     <!-- net8.0 (LTS) = piso: consumivel por apps net8/net9/net10. NAO net10
          (excluiria os apps net8). Apps net6/7 fazem upgrade antes (ADR-041). -->
