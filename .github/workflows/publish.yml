@@ -2,6 +2,8 @@ name: publish
 
 # Publica o pacote no GitHub Packages (nuget.pkg.github.com/MEDGRUPOGIT) ao
 # criar uma tag vX.Y.Z. Versao vem do .csproj (bump = editar Version + taggear).
+# Apos o push, o mesmo artefato vai pro feed S3 interno (Sleet, ADR-044 do
+# gitops-platform) — leitura sem credencial por rede interna, o caminho dos devs.
 on:
   push:
     tags: [ 'v*' ]
@@ -13,6 +15,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # OIDC pro role do feed S3 (Sleet)
     steps:
       - uses: actions/checkout@v4
 
@@ -46,3 +49,28 @@ jobs:
           --source "https://nuget.pkg.github.com/MEDGRUPOGIT/index.json"
           --api-key ${{ secrets.GITHUB_TOKEN }}
           --skip-duplicate
+
+      - name: AWS creds (OIDC, feed S3)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::733650068546:role/gha-medgrupo-nuget-feed-publisher
+          aws-region: sa-east-1
+
+      - name: Push ao feed S3 interno (Sleet)
+        run: |
+          dotnet tool install -g sleet
+          cat > sleet.json <<'JSON'
+          {
+            "sources": [
+              {
+                "name": "s3feed",
+                "type": "s3",
+                "bucketName": "medgrupo-nuget-feed",
+                "region": "sa-east-1",
+                "path": "https://medgrupo-nuget-feed.bucket.vpce-0268cde3e180e47d0-ufw5d4nc.s3.sa-east-1.vpce.amazonaws.com/"
+              }
+            ]
+          }
+          JSON
+          sleet init --config sleet.json --source s3feed || true
+          sleet push ./nupkg --config sleet.json --source s3feed --skip-existing
