@@ -48,11 +48,17 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore + Build
-        run: dotnet build -c Release src/MEDSoft.Observability/MEDSoft.Observability.csproj
+      # Build do SATELITE arrasta o nucleo via ProjectReference. Ja o pack NAO
+      # e recursivo — precisa ser explicito por projeto, senao so um dos
+      # pacotes chega ao ./nupkg e o push seguinte publica pela metade.
+      - name: Restore + Build (satelite arrasta o nucleo)
+        run: dotnet build -c Release src/MEDSoft.Observability.AspNetCore/MEDSoft.Observability.AspNetCore.csproj
 
-      - name: Pack
+      - name: Pack nucleo
         run: dotnet pack -c Release --no-build -o ./nupkg src/MEDSoft.Observability/MEDSoft.Observability.csproj
+
+      - name: Pack satelite
+        run: dotnet pack -c Release --no-build -o ./nupkg src/MEDSoft.Observability.AspNetCore/MEDSoft.Observability.AspNetCore.csproj
 
       - name: Push (GitHub Packages, skip se versao ja existe)
         run: >
