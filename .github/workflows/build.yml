@@ -25,20 +25,42 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      # Sem NUGET_TOKEN de proposito: este pacote depende SO de OpenTelemetry.*
-      # publico (nuget.org). Se um dia precisar de um MEDGRUPO.*/MEDSoft.*, o
-      # restore vai falhar aqui — e falhar cedo e o ponto.
+      # Sem NUGET_TOKEN de proposito: estes pacotes dependem SO de
+      # OpenTelemetry.* publico (nuget.org). Se um dia precisarem de um
+      # MEDGRUPO.*/MEDSoft.*, o restore vai falhar aqui — e falhar cedo e o
+      # ponto. Restore/build no SATELITE arrastam o nucleo (ProjectReference).
       - name: Restore
-        run: dotnet restore src/MEDSoft.Observability/MEDSoft.Observability.csproj
+        run: dotnet restore src/MEDSoft.Observability.AspNetCore/MEDSoft.Observability.AspNetCore.csproj
 
       - name: Build (warnings de versao viram visiveis)
         run: >
           dotnet build -c Release --no-restore
-          src/MEDSoft.Observability/MEDSoft.Observability.csproj
+          src/MEDSoft.Observability.AspNetCore/MEDSoft.Observability.AspNetCore.csproj
 
-      # Pack valida o metadata do pacote (PackageReadmeFile, Version, etc.) sem
-      # publicar nada — o mesmo passo que o publish.yml faz antes do push.
-      - name: Pack (dry-run do publish)
+      # Pack valida o metadata dos pacotes (PackageReadmeFile, Version, etc.)
+      # sem publicar nada — os mesmos passos que o publish.yml faz antes do
+      # push. Pack NAO e recursivo: um passo por projeto, sempre.
+      - name: Pack nucleo (dry-run do publish)
         run: >
           dotnet pack -c Release --no-build -o ./nupkg
           src/MEDSoft.Observability/MEDSoft.Observability.csproj
+
+      - name: Pack satelite (dry-run do publish)
+        run: >
+          dotnet pack -c Release --no-build -o ./nupkg
+          src/MEDSoft.Observability.AspNetCore/MEDSoft.Observability.AspNetCore.csproj
+
+      # Guard do INVARIANTE da issue #4: o nuspec do NUCLEO nunca pode citar
+      # aspnetcore — nem PackageReference (dependency) nem FrameworkReference
+      # (frameworkReference), os dois apareceriam no nuspec. Se voltar, todo
+      # worker em base `runtime` quebra no boot de novo. Caminho EXATO com a
+      # versao: o glob MEDSoft.Observability.*.nupkg tambem casaria o SATELITE
+      # (prefixo), que cita aspnetcore por design.
+      - name: Guard nucleo framework-neutro
+        run: |
+          V=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
+          if unzip -p "./nupkg/MEDSoft.Observability.$V.nupkg" '*.nuspec' | grep -qi 'aspnetcore'; then
+            echo "::error::o nucleo voltou a referenciar AspNetCore — workers em base runtime quebrariam no boot (issue #4)."
+            exit 1
+          fi
+          echo "ok: nuspec do nucleo $V sem aspnetcore"

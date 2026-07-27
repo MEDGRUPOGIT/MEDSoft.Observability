@@ -1,0 +1,48 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- LOCKSTEP: UMA versao para todos os pacotes deste repo, release sempre
+         conjunta com tag unica vX.Y.Z. O guard do publish.yml le a versao
+         DAQUI — e falha se algum csproj redeclarar <Version> (project body
+         VENCE este arquivo EM SILENCIO; a assercao anti-divergencia do guard
+         existe exatamente por isso).
+         Historico de bumps:
+         0.2.0 — instrumentacao de RECURSO (Postgres/SQLServer/EFCore/Mongo/
+                 Redis/AWS/RabbitMQ7) sai de `extraTracing` e entra no NUCLEO
+                 (opt-in que ninguem exercia = cobertura zero medida).
+         0.3.0 — (auditoria OTel 2026-07-26) linha OpenTelemetry 1.17.0;
+                 resource UNICO com service.version; envs OTLP padrao
+                 respeitadas; filtro default de health checks; guard de
+                 publish (tag deve casar com a versao).
+         0.4.0 — (issue #4, BREAKING) split: nucleo framework-neutro (worker
+                 volta pra imagem base `runtime`) + satelite MEDSoft.
+                 Observability.AspNetCore (AddMEDSoftAspNetCoreObservability
+                 com filterHealthChecks e additionalFilter); `isWebApp` e
+                 `filterHealthChecks` sairam do nucleo (barulhento de
+                 proposito — chamada antiga nao compila). -->
+    <Version>0.4.0</Version>
+
+    <!-- net8.0 (LTS) = piso: consumivel por apps net8/net9/net10. NAO net10
+         (excluiria os apps net8). Apps net6/7 fazem upgrade antes (ADR-041). -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- Metadata comum de pacote (GitHub Packages: nuget.pkg.github.com/
+         MEDGRUPOGIT + feed S3/Sleet do ADR-044). -->
+    <Company>Medgrupo</Company>
+    <Authors>Medgrupo Platform</Authors>
+    <RepositoryUrl>https://github.com/MEDGRUPOGIT/MEDSoft.Observability</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- $(MSBuildThisFileDirectory) = raiz do repo: resolve certo a partir de
+         QUALQUER csproj (um ..\..\ relativo, nao). Todos os pacotes carregam o
+         MESMO README — ele documenta os dois lados (web e worker). -->
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -1,30 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net8.0 (LTS) = piso: consumivel por apps net8/net9/net10. NAO net10
-         (excluiria os apps net8). Apps net6/7 fazem upgrade antes (ADR-041). -->
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
-
-    <!-- Metadata de pacote (GitHub Packages: nuget.pkg.github.com/MEDGRUPOGIT). -->
+    <!-- Version, TargetFramework e metadata comum de pacote: Directory.Build.
+         props na raiz (versao unica do repo — NAO redeclarar <Version> aqui;
+         o guard do publish barra a divergencia). -->
     <PackageId>MEDSoft.Observability</PackageId>
-    <!-- 0.2.0: instrumentacao de RECURSO (Postgres/SQLServer/EFCore/Mongo/Redis/
-         AWS/RabbitMQ7) sai de `extraTracing` e entra no NUCLEO. Ver o XML doc de
-         ObservabilityServiceCollectionExtensions para o porque (o opt-in nunca
-         foi exercido por nenhuma das 10 workloads = cobertura zero medida).
-         0.3.0 (auditoria OTel 2026-07-26): linha OpenTelemetry 1.17.0; resource
-         UNICO com service.version; envs OTLP padrao respeitadas; filtro default
-         de health checks (parametro novo filterHealthChecks). Minor, nao patch:
-         muda o comportamento emitido e a superficie da API. -->
-    <Version>0.3.0</Version>
-    <Company>Medgrupo</Company>
-    <Authors>Medgrupo Platform</Authors>
-    <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado.</Description>
-    <RepositoryUrl>https://github.com/MEDGRUPOGIT/MEDSoft.Observability</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>OTel in-process compartilhado dos apps .NET do MEDSoft (ADR-041 do gitops-plataform): traces + metricas + logs via OTLP push pro alloy-receiver; service.name = workload k8s; sem sampler (o tail do coletor decide); ILogger-&gt;OTLP correlacionado. NUCLEO framework-neutro — worker roda em imagem base `runtime`; app web adiciona MEDSoft.Observability.AspNetCore (issue #4).</Description>
   </PropertyGroup>
 
   <!-- LINHA 1.17.0 (v0.3.0) — por que saiu do "1.14.x provado na frota":
@@ -51,28 +32,21 @@
        DELIBERADAMENTE evitado (arrastaria Npgsql fixo; apps divididos entre
        9 e 10 — os dois dialetos de metrica que isso gera sao tolerados pelas
        rules da plataforma desde gitops#776). -->
+  <!-- SEM Instrumentation.AspNetCore DE PROPOSITO (issue #4, v0.4.0): ela
+       carrega FrameworkReference Microsoft.AspNetCore.App no proprio nuspec,
+       o que forcava TODO worker a imagem base `aspnet` (em `runtime` o shared
+       framework nao existe e o app quebra no boot). O lado ASP.NET vive no
+       satelite MEDSoft.Observability.AspNetCore; o build.yml tem guard que
+       barra regressao (nuspec do nucleo nunca pode citar aspnetcore). -->
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AWS" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.17.0-beta.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.StackExchangeRedis" Version="1.17.0-beta.1" />
-  </ItemGroup>
-
-  <!-- AddAspNetCoreInstrumentation num classlib exige o framework ASP.NET
-       (mesmo padrao da fixture PadraoOuro). Inofensivo em Worker/Integration
-       DESDE QUE a imagem base seja `aspnet` (nao `runtime`/`runtime-deps` —
-       nessas o shared framework nao existe e o app quebra no boot). -->
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
