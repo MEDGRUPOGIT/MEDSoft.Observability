@@ -157,6 +157,10 @@ frota.
    delegando a `OpenTelemetryConfiguration` existente ao pacote — API e Worker, ponta a
    ponta, com diff pequeno e call-site preservado. Serve de referência de "como fica" e
    pode ser descartado/ajustado à vontade — é proposta, não fato consumado.
+   Abertos: [AutorizacaoConteudos#32](https://github.com/MEDGRUPOGIT/MEDSoft.Service.AutorizacaoConteudos/pull/32)
+   (main) e [#33](https://github.com/MEDGRUPOGIT/MEDSoft.Service.AutorizacaoConteudos/pull/33)
+   (réplica homol); chart com `OTEL_SERVICE_VERSION` em
+   [gitops-catalog#165](https://github.com/MEDGRUPOGIT/gitops-catalog/pull/165).
 2. **Template:** mesma delegação na `OpenTelemetryConfiguration` do ZeroDawn (o template
    ganha telemetria de produção sem perder o fluxo local de dev).
 3. **medgrupo-sdk:** teste de contrato dos nomes de source/meter + ajuste das seções de
