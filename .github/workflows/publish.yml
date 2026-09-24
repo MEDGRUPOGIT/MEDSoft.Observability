@@ -15,6 +15,10 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # So tag v* ou dispatch da main: e o que a trust da role do feed S3 aceita.
+    # Dispatch de outra branch publicaria codigo sem review no GitHub Packages
+    # e morreria no OIDC depois — os dois feeds divergiriam.
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -76,7 +80,9 @@ jobs:
       - name: AWS creds (OIDC, feed S3)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::733650068546:role/gha-medgrupo-nuget-feed-publisher
+          # path /gha/ obrigatorio: a SCP de lockdown da conta 733 so libera
+          # role/gha/* (a role antiga, no path /, toma explicit deny no S3).
+          role-to-assume: arn:aws:iam::733650068546:role/gha/github-actions-nuget-feed-publisher
           aws-region: sa-east-1
 
       - name: Push ao feed S3 interno (Sleet)
